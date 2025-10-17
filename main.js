@@ -255,14 +255,19 @@ document.addEventListener('DOMContentLoaded', function() {
     const local = localImageForTitle(t);
     if (local) window.coverCache[t] = local;
   });
-  // Force specific covers back to original Open Library images
-  // Remove any local mapping so Open Library cover is used
-  if (localImageMap['Wings of Fire']) delete localImageMap['Wings of Fire'];
-  window.coverCache['Wings of Fire'] = 'https://covers.openlibrary.org/b/isbn/9780141036533-L.jpg';
+  // Prefer local Wings of Fire cover if user added it; otherwise use Open Library
+  const localWof = localImageForTitle('Wings of Fire');
+  if (localWof) {
+    window.coverCache['Wings of Fire'] = localWof;
+  } else {
+    window.coverCache['Wings of Fire'] = 'https://covers.openlibrary.org/b/isbn/9780141036533-L.jpg';
+  }
+  // Keep The Alchemist using Open Library by default
   window.coverCache['The Alchemist'] = 'https://covers.openlibrary.org/b/isbn/9780061122415-L.jpg';
-  // Immediately update any already-rendered images for these titles
+  // Immediately update any already-rendered images for titles present in cache
   try {
     const updateTitleImage = (title) => {
+      if (!window.coverCache[title]) return;
       const sel = 'img[data-title="' + (CSS && CSS.escape ? CSS.escape(title) : title) + '"]';
       const imgs = document.querySelectorAll(sel);
       imgs.forEach(img => { img.src = window.coverCache[title]; });
@@ -276,6 +281,55 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   preloadCovers(knownTitles);
 });
+
+// --- Simple Auth UI (dummy) ---
+function renderAuthArea() {
+  const authArea = document.getElementById('authArea');
+  const user = JSON.parse(localStorage.getItem('elib_user') || 'null');
+  if (!authArea) return;
+  if (user) {
+    authArea.innerHTML = `<img src="${studentProfile.image}" class="avatar" alt="avatar" title="${studentProfile.name}" /><button class="logout-btn" id="logoutBtn">Logout</button>`;
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      localStorage.removeItem('elib_user');
+      renderAuthArea();
+    });
+  } else {
+    authArea.innerHTML = `<button class="login-btn" id="loginBtn">Login</button>`;
+    document.getElementById('loginBtn').addEventListener('click', showLoginModal);
+  }
+}
+
+function showLoginModal() {
+  // create modal
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'loginModal';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3 style="margin-bottom:8px;">Login</h3>
+      <input id="loginUser" placeholder="Username" />
+      <input id="loginPass" placeholder="Password" type="password" />
+      <div class="actions">
+        <button id="cancelLogin" style="background:#e2e8f0; border-radius:8px; padding:8px 12px;">Cancel</button>
+        <button id="confirmLogin" style="background:#6366f1; color:#fff; border-radius:8px; padding:8px 12px;">Login</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('cancelLogin').addEventListener('click', () => overlay.remove());
+  document.getElementById('confirmLogin').addEventListener('click', () => {
+    // Accept any credentials, create a simple user object referencing studentProfile
+    const userObj = { name: studentProfile.name, id: 1 };
+    localStorage.setItem('elib_user', JSON.stringify(userObj));
+    overlay.remove();
+    renderAuthArea();
+    // Switch to Profile tab and refresh it immediately
+    try { setActiveTab('profile'); renderProfileTab(); } catch (e) { /* ignore if functions not available */ }
+  });
+}
+
+// Initialize auth area after DOM loaded
+document.addEventListener('DOMContentLoaded', renderAuthArea);
 
 // --- Students Tab Data and Logic ---
 const studentProfile = {
@@ -507,6 +561,21 @@ function renderMarketplaceTab() {
 };
 // --- Profile Tab ---
 function renderProfileTab() {
+  const user = JSON.parse(localStorage.getItem('elib_user') || 'null');
+  if (!user) {
+    // Show sign-in placeholder when logged out
+    document.getElementById('mainContent').innerHTML = `
+      <div style="max-width:640px; margin:40px auto; text-align:center; background:#fff; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,0.06); padding:40px;">
+        <div style="font-size:1.6rem; font-weight:700; color:#111827; margin-bottom:12px;">Sign in to view your profile</div>
+        <div style="color:#6b7280; margin-bottom:20px;">Please sign in to access your borrowed books, history, and account settings.</div>
+        <button id="profileSignIn" style="background:#6366f1; color:#fff; border:none; padding:12px 20px; border-radius:8px; font-weight:700; cursor:pointer;">Sign in</button>
+      </div>
+    `;
+    const signInBtn = document.getElementById('profileSignIn');
+    if (signInBtn) signInBtn.addEventListener('click', () => showLoginModal());
+    return;
+  }
+  // Logged-in view
   document.getElementById('mainContent').innerHTML = `
     <div class="profile-card" style="max-width:500px; margin:0 auto; background:#fff; border-radius:16px; box-shadow:0 2px 12px rgba(60,72,100,0.10); padding:32px 28px;">
       <div class="profile-header" style="display:flex; align-items:center; gap:24px; margin-bottom:24px;">
@@ -519,6 +588,9 @@ function renderProfileTab() {
             <div class="detail-group"><label style="font-weight:600; color:#1e293b;">Department:</label> ${studentProfile.department}</div>
           </div>
         </div>
+        <div style="margin-left:auto;">
+          <button id="profileLogout" class="logout-btn">Logout</button>
+        </div>
       </div>
       <div class="profile-history" style="margin-top:16px;">
         <h3 style="color:#3730a3; margin-bottom:12px;">Borrowed Books History</h3>
@@ -530,6 +602,13 @@ function renderProfileTab() {
       </div>
     </div>
   `;
+  // Wire logout button
+  const btn = document.getElementById('profileLogout');
+  if (btn) btn.addEventListener('click', () => {
+    localStorage.removeItem('elib_user');
+    renderAuthArea();
+    renderProfileTab();
+  });
 }
 // --- Cart Tab ---
 let cart = [];

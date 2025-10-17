@@ -15,6 +15,71 @@ function setFooterYear() {
 // Add to Cart button style
 const addToCartBtnStyle = 'background:#6366f1; color:#fff; border-radius:8px; font-weight:700; padding:10px 20px; border:none; box-shadow:0 2px 8px rgba(99,102,241,0.08); transition:background 0.2s; cursor:pointer; margin-top:10px;';
 
+// Cover helper: try OpenLibrary, fallback to placeholder
+window.coverCache = window.coverCache || {};
+function placeholderUrl(title) {
+  return 'https://placehold.co/300x420/ffffff/000000?text=' + encodeURIComponent(title);
+}
+// Local image map (filename without path)
+const localImageMap = {
+  'Advanced Calculus': 'img/calculus.jpg',
+  'Chemistry KTU Text': 'img/chem.jpg',
+  'Let Us C': 'img/comp.jpg',
+  'KTU Maths Guide': 'img/math.jpg',
+  'Wings of Fire': 'img/wof.jpg',
+  'Python': 'img/python.jpg',
+  'KTU Teaching Guide': 'img/guide.jpg',
+  'Control Systems Guide': 'img/control system.jpg',
+  'Engineering Pedagogy': 'img/pedogy.jpg',
+  'KTU Research Paper 2024': 'img/research.jpg'
+};
+
+function localImageForTitle(title) {
+  if (localImageMap[title]) return localImageMap[title];
+  // simple fuzzy match: check if any filename contains a word from title
+  const files = [
+    'img/calculus.jpg','img/chem.jpg','img/comp.jpg','img/control system.jpg','img/guide.jpg','img/math.jpg','img/pedogy.jpg','img/python.jpg','img/research.jpg','img/wof.jpg'
+  ];
+  const t = title.toLowerCase();
+  for (const f of files) {
+    const name = f.split('/').pop().replace('.jpg','').toLowerCase();
+    if (t.includes(name) || name.includes(t.split(' ')[0])) return f;
+  }
+  return '';
+}
+function fetchCoverForTitle(title) {
+  // Prefer local images first
+  const local = localImageForTitle(title);
+  if (local) return Promise.resolve(local);
+  const api = 'https://openlibrary.org/search.json?title=' + encodeURIComponent(title);
+  return fetch(api)
+    .then(res => res.ok ? res.json() : Promise.reject('no-res'))
+    .then(json => {
+      if (json && Array.isArray(json.docs) && json.docs.length > 0) {
+        const doc = json.docs[0];
+        if (doc.cover_i) return 'https://covers.openlibrary.org/b/id/' + doc.cover_i + '-L.jpg';
+        if (doc.isbn && doc.isbn.length) return 'https://covers.openlibrary.org/b/isbn/' + doc.isbn[0] + '-L.jpg';
+      }
+      return placeholderUrl(title);
+    })
+    .catch(() => placeholderUrl(title));
+}
+function preloadCovers(titles) {
+  titles.forEach(t => {
+    if (window.coverCache[t]) return;
+    fetchCoverForTitle(t).then(url => {
+      window.coverCache[t] = url;
+      // update any existing images for this title
+      try {
+        const imgs = document.querySelectorAll('img[data-title="' + CSS.escape(t) + '"]');
+        imgs.forEach(img => { img.src = url; });
+      } catch (e) {
+        // CSS.escape may not exist in very old browsers; ignore errors
+      }
+    });
+  });
+}
+
 // Add search functionality
 function filterBooksBySearch(books, searchTerm) {
   if (!searchTerm) return books;
@@ -44,7 +109,7 @@ function renderHomeTab() {
       title: 'KTU Maths Guide',
       author: 'KTU Faculty',
       available: true,
-      cover: 'https://covers.openlibrary.org/b/isbn/9788120345928-L.jpg',
+      cover: 'img/math',
       description: 'Comprehensive guide for KTU mathematics syllabus.'
     },
     {
@@ -68,8 +133,8 @@ function renderHomeTab() {
     <p>Browse, borrow, and sell books. Use the navigation above to explore features for students and teachers.</p>
     <div class="book-grid" style="margin-top:30px;">
       ${filteredHomeBooks.map(book => `
-        <div class="book-card">
-          <img src="${book.cover}" class="book-image" alt="${book.title}" />
+          <div class="book-card">
+            <img src="${window.coverCache[book.title] || placeholderUrl(book.title)}" data-title="${book.title}" class="book-image" alt="${book.title}" />
           <div class="book-content">
             <div class="book-title">${book.title}</div>
             <div class="book-author">${book.author}</div>
@@ -88,7 +153,7 @@ function renderHomeTab() {
     if (filteredMarketBooks.length > 0) {
       const marketBooksHtml = filteredMarketBooks.map((b, i) => `
         <div class="book-card">
-          ${b.image ? `<img src="${b.image}" class="book-image" alt="${b.title}" />` : ''}
+          ${b.image ? `<img src="${b.image}" class="book-image" alt="${b.title}" />` : `<img src="${window.coverCache[b.title] || placeholderUrl(b.title)}" data-title="${b.title}" class="book-image" alt="${b.title}" />`}
           <div class="book-content">
             <div class="book-title">${b.title}</div>
             <div class="book-author">Student Seller</div>
@@ -179,16 +244,51 @@ document.addEventListener('DOMContentLoaded', function() {
   setupSearchBar();
   setupTabs();
   renderHomeTab();
+  // Preload covers for known titles (Home, Students, Teachers)
+  const knownTitles = [
+    'Chemistry KTU Text','Wings of Fire','KTU Maths Guide','Let Us C','The Alchemist',
+    'Advanced Calculus','Organic Chemistry','To Kill a Mockingbird','1984','GRE Prep','GMAT Guide','Technical Writing',
+    'KTU Teaching Guide','KTU Research Paper 2024','Engineering Pedagogy','Digital Signal Processing','Machine Learning Research','Control Systems Guide'
+  ];
+  // Seed cache with local images where available
+  knownTitles.forEach(t => {
+    const local = localImageForTitle(t);
+    if (local) window.coverCache[t] = local;
+  });
+  // Force specific covers back to original Open Library images
+  // Remove any local mapping so Open Library cover is used
+  if (localImageMap['Wings of Fire']) delete localImageMap['Wings of Fire'];
+  window.coverCache['Wings of Fire'] = 'https://covers.openlibrary.org/b/isbn/9780141036533-L.jpg';
+  window.coverCache['The Alchemist'] = 'https://covers.openlibrary.org/b/isbn/9780061122415-L.jpg';
+  // Immediately update any already-rendered images for these titles
+  try {
+    const updateTitleImage = (title) => {
+      const sel = 'img[data-title="' + (CSS && CSS.escape ? CSS.escape(title) : title) + '"]';
+      const imgs = document.querySelectorAll(sel);
+      imgs.forEach(img => { img.src = window.coverCache[title]; });
+    };
+    updateTitleImage('Wings of Fire');
+    updateTitleImage('The Alchemist');
+    // If Home is active, re-render to ensure the HTML uses the new cache
+    if (document.querySelector('.nav-link.active')?.dataset.tab === 'home') renderHomeTab();
+  } catch (e) {
+    // ignore
+  }
+  preloadCovers(knownTitles);
 });
 
 // --- Students Tab Data and Logic ---
 const studentProfile = {
-  name: 'Amit Kumar',
-  semester: '5th',
+  name: 'Emiya Anna Biju',
+  semester: '3rd',
   department: 'Computer Science',
   class: 'B.Tech',
-  image: 'https://placehold.co/100x100?text=Student'
+  image: 'https://tse2.mm.bing.net/th/id/OIP.D6I-ozhUJHsIovGC5zMoUAHaKK?pid=Api&P=0&h=220'
 };
+// Update any existing profile images on the page immediately
+try {
+  document.querySelectorAll('.profile-image').forEach(img => { img.src = studentProfile.image; });
+} catch (e) { /* ignore if DOM not ready */ }
 const studentBooks = [
   { id: 1, title: 'Advanced Calculus', available: true },
   { id: 2, title: 'Organic Chemistry', available: false },
@@ -205,7 +305,7 @@ function renderStudentsTab() {
     <div class="book-grid" id="bookList">
       ${studentBooks.map(book => `
         <div class="book-card">
-          <img src="https://placehold.co/300x200?text=${encodeURIComponent(book.title)}" class="book-image" alt="${book.title}" />
+          <img src="${window.coverCache[book.title] || placeholderUrl(book.title)}" data-title="${book.title}" class="book-image" alt="${book.title}" />
           <div class="book-content">
             <div class="book-title">${book.title}</div>
             <div class="book-author">KTU</div>
@@ -249,7 +349,7 @@ function renderTeachersTab() {
     <p>Reference books, guides, and research papers for KTU faculty members.</p>
     <div class="book-grid" style="margin-top:30px;">
       <div class="book-card">
-        <img src="https://placehold.co/300x200?text=KTU+Teaching+Guide" class="book-image" alt="KTU Teaching Guide" />
+        <img src="${window.coverCache['KTU Teaching Guide'] || placeholderUrl('KTU Teaching Guide')}" data-title="KTU Teaching Guide" class="book-image" alt="KTU Teaching Guide" />
         <div class="book-content">
           <div class="book-title">KTU Teaching Guide</div>
           <div class="book-author">KTU Faculty</div>
@@ -259,7 +359,7 @@ function renderTeachersTab() {
         </div>
       </div>
       <div class="book-card">
-        <img src="https://placehold.co/300x200?text=KTU+Research+Paper+2024" class="book-image" alt="KTU Research Paper 2024" />
+  <img src="${window.coverCache['KTU Research Paper 2024'] || placeholderUrl('KTU Research Paper 2024')}" data-title="KTU Research Paper 2024" class="book-image" alt="KTU Research Paper 2024" />
         <div class="book-content">
           <div class="book-title">KTU Research Paper 2024</div>
           <div class="book-author">KTU Research Group</div>
@@ -269,7 +369,7 @@ function renderTeachersTab() {
         </div>
       </div>
       <div class="book-card">
-        <img src="https://placehold.co/300x200?text=Engineering+Pedagogy" class="book-image" alt="Engineering Pedagogy" />
+  <img src="${window.coverCache['Engineering Pedagogy'] || placeholderUrl('Engineering Pedagogy')}" data-title="Engineering Pedagogy" class="book-image" alt="Engineering Pedagogy" />
         <div class="book-content">
           <div class="book-title">Engineering Pedagogy</div>
           <div class="book-author">KTU Board</div>
@@ -279,7 +379,7 @@ function renderTeachersTab() {
         </div>
       </div>
       <div class="book-card">
-        <img src="https://placehold.co/300x200?text=Digital+Signal+Processing" class="book-image" alt="Digital Signal Processing" />
+  <img src="${window.coverCache['Digital Signal Processing'] || placeholderUrl('Digital Signal Processing')}" data-title="Digital Signal Processing" class="book-image" alt="Digital Signal Processing" />
         <div class="book-content">
           <div class="book-title">Digital Signal Processing</div>
           <div class="book-author">KTU Faculty</div>
@@ -289,7 +389,7 @@ function renderTeachersTab() {
         </div>
       </div>
       <div class="book-card">
-        <img src="https://placehold.co/300x200?text=Machine+Learning+Research" class="book-image" alt="Machine Learning Research" />
+  <img src="${window.coverCache['Machine Learning Research'] || placeholderUrl('Machine Learning Research')}" data-title="Machine Learning Research" class="book-image" alt="Machine Learning Research" />
         <div class="book-content">
           <div class="book-title">Machine Learning Research</div>
           <div class="book-author">KTU Research Team</div>
@@ -299,7 +399,7 @@ function renderTeachersTab() {
         </div>
       </div>
       <div class="book-card">
-        <img src="https://placehold.co/300x200?text=Control+Systems+Guide" class="book-image" alt="Control Systems Guide" />
+  <img src="${window.coverCache['Control Systems Guide'] || placeholderUrl('Control Systems Guide')}" data-title="Control Systems Guide" class="book-image" alt="Control Systems Guide" />
         <div class="book-content">
           <div class="book-title">Control Systems Guide</div>
           <div class="book-author">KTU Faculty</div>
@@ -335,7 +435,11 @@ function renderMarketplaceTab() {
         <form id="sellForm" class="marketplace-form" style="background:#f1f5f9; border-radius:12px; box-shadow:0 2px 8px rgba(60,72,100,0.06); padding:24px 20px; margin-bottom:24px;" enctype="multipart/form-data">
           <input type="text" id="sellTitle" placeholder="Book Title" required style="padding:10px 14px; border-radius:8px; border:1px solid #d1d5db; font-size:1rem; margin-bottom:8px; background:#fff; width:100%;" />
           <input type="number" id="sellPrice" placeholder="Price" required style="padding:10px 14px; border-radius:8px; border:1px solid #d1d5db; font-size:1rem; margin-bottom:8px; background:#fff; width:100%;" />
-          <input type="file" id="sellImage" accept="image/*" style="margin-bottom:8px;" />
+          <div class="file-picker" style="margin-bottom:8px;">
+            <label for="sellImage" class="file-label">Choose Cover Image</label>
+            <input type="file" id="sellImage" accept="image/*" />
+            <div class="file-preview" id="sellPreview"><span style="color:#64748b; font-size:0.85rem; padding:6px; text-align:center;">No image</span></div>
+          </div>
           <button type="submit" style="background:#6366f1; color:#fff; border-radius:8px; font-weight:700; padding:10px 20px; border:none; box-shadow:0 2px 8px rgba(99,102,241,0.08); transition:background 0.2s; cursor:pointer;">List Book</button>
         </form>
       </div>
@@ -368,15 +472,33 @@ function renderMarketplaceTab() {
       const reader = new FileReader();
       reader.onload = function(evt) {
         image = evt.target.result;
-  window.marketplaceBooks.push({ title, price, image });
-  renderMarketplaceTab();
+        window.marketplaceBooks.push({ title, price, image });
+        renderMarketplaceTab();
       };
       reader.readAsDataURL(imageInput.files[0]);
     } else {
-  window.marketplaceBooks.push({ title, price, image: '' });
-  renderMarketplaceTab();
+      window.marketplaceBooks.push({ title, price, image: '' });
+      renderMarketplaceTab();
     }
+  
   };
+  // File preview logic
+  const sellImageInput = document.getElementById('sellImage');
+  const sellPreview = document.getElementById('sellPreview');
+  if (sellImageInput) {
+    sellImageInput.addEventListener('change', function() {
+      const file = this.files[0];
+      if (!file) {
+        sellPreview.innerHTML = '<span style="color:#64748b; font-size:0.85rem; padding:6px; text-align:center;">No image</span>';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        sellPreview.innerHTML = '<img src="' + e.target.result + '" alt="preview" />';
+      };
+      reader.readAsDataURL(file);
+    });
+  }
   window.buyBook = function(index) {
     alert('Thank you for buying ' + marketplaceBooks[index].title + '!');
     marketplaceBooks.splice(index, 1);
